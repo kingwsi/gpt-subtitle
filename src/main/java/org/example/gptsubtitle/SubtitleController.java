@@ -13,6 +13,7 @@ import org.example.gptsubtitle.subtitle.Subtitle;
 import org.example.gptsubtitle.subtitle.SubtitleInfo;
 import org.example.gptsubtitle.subtitle.TranslateParam;
 import org.example.gptsubtitle.subtitle.TranslateRequest;
+import org.example.gptsubtitle.subtitle.TranslatedMapParam;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,7 +29,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
-import java.rmi.RemoteException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -66,15 +66,7 @@ public class SubtitleController {
                 .map(SubtitleInfo::getSubtitles)
                 .orElseThrow(() -> new RuntimeException("Subtitle not found"));
 
-        Path translateMapPath = Paths.get(TEMP_DIR, fileId + "_map.json");
-        if (!Files.exists(translateMapPath)) {
-            Files.createFile(translateMapPath);
-        }
-        Map<Integer, String> translatedMap = new HashMap<>();
-        if (translateMapPath.toFile().length() > 0) {
-            translatedMap = objectMapper.readValue(translateMapPath.toFile(), new TypeReference<>() {
-            });
-        }
+        Map<Integer, String> translatedMap = getTranslateMap(fileId);
 
         int lastTranslatedIndex = 0;
         if (begin != null) {
@@ -118,7 +110,7 @@ public class SubtitleController {
         int endIndex = lastTranslatedIndex + config.getChunkSize();
         List<Subtitle> list = subtitles.subList(begin, Math.min(endIndex, subtitles.size()));
         if (list.isEmpty()) {
-            throw new RemoteException("list is empty!");
+            throw new RuntimeException("list is empty!");
         }
         List<String> chunkTexts = list.stream().map(Subtitle::getText).collect(Collectors.toCollection(ArrayList::new));
 
@@ -127,13 +119,13 @@ public class SubtitleController {
         String result = openaiClient.completions(translateRequest);
         OpenaiResult completions = objectMapper.readValue(result, OpenaiResult.class);
         if (completions == null || completions.getChoices() == null) {
-            throw new RemoteException("Translate Response is empty!");
+            throw new RuntimeException("Translate Response is empty!");
         }
         OpenaiRequest.Message message = completions.getChoices()
                 .stream().findFirst()
                 .map(OpenaiResult.Choice::getMessage).orElse(null);
         if (message == null || message.getContent() == null || message.getContent().isEmpty()) {
-            throw new RemoteException("Translate Message is empty!");
+            throw new RuntimeException("Translate Message is empty!");
         }
         String resultContent = message.getContent();
         List<String> translates;
@@ -155,9 +147,37 @@ public class SubtitleController {
             subtitle.setTranslated(true);
             translatedMap.put(subtitle.getIndex(), translates.get(i));
         }
-        objectMapper.writeValue(translateMapPath.toFile(), translatedMap);
-        log.info("Write to map file：{}", translateMapPath.toAbsolutePath());
+        writeTranslateMap(fileId, translatedMap);
         return Response.ok(translates);
+    }
+
+    /**
+     * 删除已翻译条目
+     */
+    @PostMapping("/removeTranslatedItem")
+    public Response<String> removeTranslatedItem(@RequestBody TranslatedMapParam translatedMapParam) throws IOException {
+        if (!StringUtils.hasText(translatedMapParam.getFileId()) || translatedMapParam.getSubtitleIndex() == null) {
+            throw new IllegalArgumentException();
+        }
+        Map<Integer, String> translateMap = getTranslateMap(translatedMapParam.getFileId());
+        translateMap.remove(translatedMapParam.getSubtitleIndex());
+        writeTranslateMap(translatedMapParam.getFileId(), translateMap);
+        return Response.ok("OK");
+    }
+
+    /**
+     * 更新已翻译条目
+     */
+    @PostMapping("/updateTranslatedItem")
+    public Response<String> updateTranslatedItem(@RequestBody TranslatedMapParam translatedMapParam) throws IOException {
+        if (!StringUtils.hasText(translatedMapParam.getFileId())
+                || !StringUtils.hasText(translatedMapParam.getTranslatedText()) || translatedMapParam.getSubtitleIndex() == null) {
+            throw new IllegalArgumentException();
+        }
+        Map<Integer, String> translateMap = getTranslateMap(translatedMapParam.getFileId());
+        translateMap.put(translatedMapParam.getSubtitleIndex(), translatedMapParam.getTranslatedText());
+        writeTranslateMap(translatedMapParam.getFileId(), translateMap);
+        return Response.ok("OK");
     }
 
     @GetMapping("/getSubtitleInfo")
@@ -167,16 +187,8 @@ public class SubtitleController {
             throw new RuntimeException("File not found, You need to upload a file");
         }
         List<Subtitle> subtitleList = SRTParser.parseSRT(uploadPath);
-        Path translateMapPath = Paths.get(TEMP_DIR, fileId + "_map.json");
-        if (!Files.exists(translateMapPath)) {
-            Files.createFile(translateMapPath);
-        }
 
-        Map<Integer, String> translateMap = new HashMap<>();
-        if (translateMapPath.toFile().length() > 0) {
-            translateMap = objectMapper.readValue(translateMapPath.toFile(), new TypeReference<>() {
-            });
-        }
+        Map<Integer, String> translateMap = getTranslateMap(fileId);
 
         for (int i = 0; i < subtitleList.size(); i++) {
             Subtitle subtitle = subtitleList.get(i);
@@ -232,9 +244,31 @@ public class SubtitleController {
         // Use HexFormat (Java 17+)
         return HexFormat.of().formatHex(digest);
     }
-
+    
     @GetMapping("/getConfig")
     public Response<AppConfig> getConfig() {
         return Response.ok(new AppConfig());
+    }
+    
+    public Map<Integer, String> getTranslateMap(String fileId) throws IOException {
+        Path translateMapPath = Paths.get(TEMP_DIR, fileId + "_map.json");
+        if (!Files.exists(translateMapPath)) {
+            Files.createFile(translateMapPath);
+        }
+        Map<Integer, String> translatedMap = new HashMap<>();
+        if (translateMapPath.toFile().length() > 0) {
+            translatedMap = objectMapper.readValue(translateMapPath.toFile(), new TypeReference<>() {
+            });
+        }
+        return translatedMap;
+    }
+    
+    public void writeTranslateMap(String fileId, Map<Integer, String> translatedMap) throws IOException {
+        Path translateMapPath = Paths.get(TEMP_DIR, fileId + "_map.json");
+        if (!Files.exists(translateMapPath)) {
+            Files.createFile(translateMapPath);
+        }
+        objectMapper.writeValue(translateMapPath.toFile(), translatedMap);
+        log.info("Write to map file：{}", translateMapPath.toAbsolutePath());
     }
 }

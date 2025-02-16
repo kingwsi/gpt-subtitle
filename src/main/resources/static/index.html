@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" href="data:;base64,=">
     <title>GPT-Subtitle</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
@@ -118,7 +119,8 @@
 <div id="app" class="container mt-4 mb-5">
     <!-- 信息面板 -->
     <div class="alert alert-primary text-center" role="alert">
-        <h4 class="mb-0">{{ videoTitle }}</h4>
+        <h6 class="mb-0" v-if="fileInfo && fileInfo.name">{{ fileInfo.name }}</h6>
+        <h6 class="mb-0" v-else>上传一个字幕文件开始翻译</h6>
     </div>
 
     <!-- Toast 提示组件 -->
@@ -142,11 +144,18 @@
                 <div class="d-flex align-items-center subtitle-header mb-1">
                     <span class="badge bg-secondary me-2">{{ subtitle.index }}</span>
                     <span class="text-muted flex-grow-1">{{ subtitle.timestamp }}</span>
-                    <button class="btn btn-link btn-sm p-0 translate-btn"
+                    <button class="btn btn-link btn-sm p-1 me-1 translate-btn"
                             @click="startTranslateFromLine(subtitle.index)"
                             data-bs-toggle="tooltip"
                             title="翻译此条">
                         <i class="bi bi-translate"></i>
+                    </button>
+                    <button class="btn btn-link btn-sm p-1 translate-btn"
+                            @click="removeTranslatedItem(subtitle)"
+                            v-if="subtitle.translated"
+                            data-bs-toggle="tooltip"
+                            title="删除">
+                        <i class="bi bi-trash-fill" style="color: #dc3545"></i>
                     </button>
                 </div>
                 <div class="row g-2">
@@ -160,6 +169,8 @@
                         <div class="form-group mb-1">
                             <label class="small text-muted">译文</label>
                             <input type="text" class="form-control form-control-sm" v-model="subtitle.translatedText"
+                                   @focus="storeOldValue($event)"
+                                   @blur="updateTranslatedItem($event, subtitle.index)"
                                    :class="{'bg-light': subtitle.translated}">
                         </div>
                     </div>
@@ -186,7 +197,7 @@
                     </div>
                     <button v-if="!isTranslating" class="btn btn-warning btn-sm px-3 me-3"
                             @click="startTranslate()"
-                            :disabled="!fileId || stopping">
+                            :disabled="!fileInfo.fileId || stopping">
                         <i class="bi bi-translate me-1"></i>
                         <span>
                             开始翻译
@@ -195,7 +206,7 @@
                     <button v-else
                             class="btn btn-danger btn-sm px-3 me-3"
                             @click="stopTranslate()"
-                            :disabled="!fileId || stopping">
+                            :disabled="!fileInfo.fileId || stopping">
                         <i class="bi bi-translate me-1"></i>
                         <span v-if="stopping">
                             停止中...
@@ -207,7 +218,7 @@
 
                     <div class="btn-outline-secondary btn-sm me-3 px-3" v-if="subtitles && subtitles.length>0">
                         <div class="d-flex align-items-center">
-                            <div class="progress" 
+                            <div class="progress"
                                  data-bs-toggle="tooltip"
                                  :title="translatedCount + '/' + subtitles.length"
                                  style="width: 150px; height: 20px; flex-grow: 1;">
@@ -232,8 +243,8 @@
                         <i class="bi bi-arrow-clockwise me-1"></i> 刷新
                     </button>
                     <button class="btn btn-success btn-sm me-3 px-3"
-                            @click="saveFile">
-                        <i class="bi bi-save me-1"></i> 保存
+                            @click="openDownload">
+                        <i class="bi bi-save me-1"></i> 下载
                     </button>
                     <button class="btn btn-outline-dark btn-sm px-3"
                             @click="openSettings"
@@ -306,6 +317,26 @@
             </div>
         </div>
     </div>
+
+    <!-- 保存选项模态框 -->
+    <div class="modal fade" id="downloadModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body">
+                    <div class="container-fluid">
+                        <div class="row justify-content-center">
+                            <div class="col-auto">
+                                <button type="button" @click="saveFile(true)" class="btn btn-secondary">保存双语字幕</button>
+                            </div>
+                            <div class="col-auto">
+                                <button type="button" @click="saveFile(false)" class="btn btn-secondary">仅保存翻译后字幕</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -315,7 +346,11 @@ new Vue({
         videoTitle: '未上传字幕',
         subtitles: [],
         selectedFile: null,
-        fileId: '96105951c0ae78ae8e7d2c4f1ae78921',
+        fileInfo: {
+            fileId: null,
+            name: '',
+            path: null,
+        },
         toastMessage: '',
         toastClass: '',
         isTranslating: false,
@@ -334,7 +369,9 @@ new Vue({
             enableJsonSchema: false,
             retryNum: 3
         },
-        settingsModal: null
+        downloadModal: null,
+        settingsModal: null,
+        oldTranslatedValue: null
     },
     methods: {
         async fetchApi(url, method = 'GET', body = null) {
@@ -392,8 +429,13 @@ new Vue({
                 }
                 const responseData = await response.json();
                 if (responseData && responseData.success){
-                    this.fileId = await responseData.data;
-                    localStorage.setItem('fileId', this.fileId); // Save fileId to local storage
+                    const file_id = await responseData.data;
+                    this.fileInfo = {
+                        fileId: file_id,
+                        name: file.name,
+                        path: event.target.value
+                    }
+                    localStorage.setItem('fileInfo', JSON.stringify(this.fileInfo));
                     await this.loadSubtitleInfo();
                     this.showToast('文件上传成功');
                 } else {
@@ -408,16 +450,16 @@ new Vue({
             }
         },
         updateSubtitlesData(data) {
-            this.fileId = data.fileId;
+            this.fileInfo.fileId = data.fileId;
             this.subtitles = data.subtitles;
             // 设置视频标题（使用文件ID的前8位作为简短标识）
-            this.videoTitle = `字幕文件 (${this.fileId.substring(0, 8)}...)`;
+            // this.fileInfo = localStorage.getItem('fileInfo')
             this.translatedCount = this.getTranslatedCount();
         },
         async loadSubtitleInfo() {
-            if (!this.fileId) return;
+            if (!this.fileInfo || !this.fileInfo.fileId) return;
 
-            const data = await this.fetchApi(`/api/subtitle/getSubtitleInfo?fileId=${this.fileId}`);
+            const data = await this.fetchApi(`/api/subtitle/getSubtitleInfo?fileId=${this.fileInfo.fileId}`);
             if (data && data.success) {
                 this.updateSubtitlesData(data.data);
                 this.showToast('加载字幕成功！', 'success');
@@ -426,15 +468,17 @@ new Vue({
                 this.showToast('获取字幕信息失败: ' + error.message, 'error');
             }
         },
-        generateSRT() {
+        generateSRT(saveBoth) {
             let content = '';
             this.subtitles.forEach(subtitle => {
                 // 序号
                 content += subtitle.index + '\n';
                 // 时间戳
                 content += subtitle.timestamp + '\n';
-                // 原文
-                content += subtitle.text + '\n';
+                if (saveBoth) {
+                    // 原文
+                    content += subtitle.text + '\n';
+                }
                 // 如果有译文，添加译文
                 if (subtitle.translatedText) {
                     content += subtitle.translatedText + '\n';
@@ -460,15 +504,17 @@ new Vue({
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
         },
-
-        async saveFile() {
+        openDownload(){
+            this.downloadModal.show();
+        },
+        async saveFile(saveBoth) {
             try {
                 // 生成双语字幕内容
-                const content = this.generateSRT();
+                const content = this.generateSRT(saveBoth);
 
                 // 生成文件名（使用原文件ID并添加时间戳）
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
-                const filename = `bilingual_${this.fileId.slice(0, 8)}_${timestamp}.srt`;
+                const filename = `${this.fileInfo.name}_${timestamp}.srt`;
 
                 // 下载文件
                 this.downloadFile(content, filename);
@@ -477,10 +523,12 @@ new Vue({
             } catch (error) {
                 console.error('保存文件失败:', error);
                 this.showToast('保存文件失败: ' + error.message, 'error');
+            } finally {
+                this.downloadModal.hide();
             }
         },
         async startTranslate() {
-            if (this.isTranslating || !this.fileId) return;
+            if (this.isTranslating || !this.fileInfo.fileId) return;
 
             // 检查配置是否存在
             if (!this.config || !this.config.baseApi || !this.config.appKey || !this.config.model) {
@@ -585,7 +633,7 @@ new Vue({
                 try {
                     // 构建请求体
                     const requestBody = {
-                        fileId: this.fileId,
+                        fileId: this.fileInfo.fileId,
                         begin: subtitle.realIndex,
                         config: {
                             prompt: this.config.prompt,
@@ -599,7 +647,7 @@ new Vue({
                             dictionary: this.dictionary
                         }
                     };
-                    
+
                     const responseData = await this.fetchApi('/api/subtitle/translate', 'POST', requestBody);
 
                     if (responseData && responseData.success) {
@@ -669,13 +717,47 @@ new Vue({
         },
         stopTranslate() {
             this.stopping = true;
+        },
+        storeOldValue(event) {
+            this.oldTranslatedValue = event.target.value
+        },
+        async updateTranslatedItem(event, index) {
+            const val = event.target.value;
+            if (val && this.oldTranslatedValue && this.oldTranslatedValue !== val) {
+                const responseData = await this.fetchApi('/api/subtitle/updateTranslatedItem', 'POST', {
+                    fileId: this.fileInfo.fileId,
+                    subtitleIndex: index,
+                    translatedText: val
+                })
+
+                if (responseData && responseData.success) {
+                    this.showToast(`已修改第${index}行`);
+                } else {
+                    this.showToast(`更新失败！${responseData | responseData.message}`, 'error');
+                }
+            }
+        },
+        async removeTranslatedItem(subtitle) {
+            const responseData = await this.fetchApi('/api/subtitle/removeTranslatedItem', 'POST', {
+                fileId: this.fileInfo.fileId,
+                subtitleIndex: subtitle.index
+            })
+            if (responseData && responseData.success) {
+                this.showToast(`已删除第${subtitle.realIndex}行`);
+                subtitle.translatedText = null;
+                subtitle.translated = false;
+                this.subtitles.splice(subtitle.realIndex, subtitle);
+            } else {
+                this.showToast(`删除失败！${responseData | responseData.message}`, 'error');
+            }
         }
+        
     },
     created() {
         // Check for fileId in local storage
-        const savedFileId = localStorage.getItem('fileId');
-        if (savedFileId) {
-            this.fileId = savedFileId; // Set fileId from local storage
+        const fileInfo = localStorage.getItem('fileInfo');
+        if (fileInfo) {
+            this.fileInfo = JSON.parse(fileInfo);
             this.loadSubtitleInfo(); // Load subtitle info
         }
     },
@@ -703,6 +785,7 @@ new Vue({
 
         // Initialize modal
         this.settingsModal = new bootstrap.Modal(document.getElementById('settingsModal'));
+        this.downloadModal = new bootstrap.Modal(document.getElementById('downloadModal'));
 
         // Load config
         await this.loadConfig();
@@ -715,10 +798,7 @@ new Vue({
         }
     },
     beforeDestroy() {
-        // 组件销毁前清除定时器
-        if (this.timer) {
-            clearInterval(this.timer);
-        }
+
     }
 });
 </script>

@@ -51,18 +51,25 @@ public class OpenaiClient {
             throw new IllegalArgumentException("messages cannot be null or empty");
         }
 
+        ObjectMapper objectMapper = new ObjectMapper();
+
         AppConfig config = translateRequest.getConfig();
 
         OpenaiRequest openaiRequest = new OpenaiRequest();
         openaiRequest.setModel(config.getModel());
         openaiRequest.setStream(false);
         openaiRequest.setMaxTokens(config.getMaxTokens());
+        this.messageLimit = config.getMessageMaxSize();
         
         List<OpenaiRequest.Message> messages = new ArrayList<>();
 
         // system
-        if (!StringUtils.hasText(config.getPrompt())) {
+        if (StringUtils.hasText(config.getPrompt())) {
             messages.add(new OpenaiRequest.Message(MessageRole.system, config.getPrompt()));
+        }
+        
+        if (config.getDictionary() != null && !config.getDictionary().isEmpty()) {
+            messages.add(new OpenaiRequest.Message(MessageRole.system, "参考这份词典：" + objectMapper.writeValueAsString(config.getDictionary())));
         }
 
         // JsonSchema
@@ -84,8 +91,8 @@ public class OpenaiClient {
 
         openaiRequest.setMessages(messages);
 
-        String jsonBody = new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(openaiRequest);
-        log.info("jsonBody: {}", jsonBody);
+        String jsonBody = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(openaiRequest);
+        log.debug("jsonBody: \n {}", jsonBody);
 
         MediaType JSON = MediaType.parse("application/json; charset=utf-8");
         RequestBody body = RequestBody.create(jsonBody, JSON);
@@ -101,7 +108,9 @@ public class OpenaiClient {
         // 发送请求并处理响应
         try (Response response = client.newCall(request).execute()) {
             if (response.isSuccessful() && response.body() != null) {
-                return response.body().string();
+                String responseBody = response.body().string();
+                log.debug("responseBody: \n {}", responseBody);
+                return responseBody;
             } else {
                 throw new IOException("Unexpected code " + response);
             }

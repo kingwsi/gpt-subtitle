@@ -100,7 +100,6 @@ public class SubtitleController {
         List<Subtitle> historySubtitles = subtitles.subList(historyBegin, begin);
 
         OpenaiClient openaiClient = new OpenaiClient(config.getBaseApi(), config.getAppKey());
-        openaiClient.setMessageLimit(config.getMessageMaxSize());
 
         TranslateRequest translateRequest = new TranslateRequest();
         translateRequest.setConfig(config);

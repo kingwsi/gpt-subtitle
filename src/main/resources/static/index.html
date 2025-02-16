@@ -290,7 +290,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Dictionary</label>
-                            <textarea class="form-control" v-model="config.dictionary" rows="3" placeholder='{"你好":"hello","世界":"world"}'></textarea>
+                            <textarea class="form-control" v-model="config.dictionaryJson" rows="3" placeholder='{"你好":"hello","世界":"world"}'></textarea>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">
@@ -321,6 +321,7 @@ new Vue({
         isTranslating: false,
         stopping: false,
         translatedCount: 0,
+        dictionary: {},
         config: {
             prompt: '',
             baseApi: '',
@@ -329,7 +330,7 @@ new Vue({
             chunkSize: 0,
             messageMaxSize: 0,
             maxTokens: 0,
-            dictionary: "",
+            dictionaryJson: null,
             enableJsonSchema: false,
             retryNum: 3
         },
@@ -570,6 +571,15 @@ new Vue({
             this.settingsModal.hide();
         },
         async translateWithRetry(subtitle) {
+            if (this.config.dictionaryJson) {
+                try {
+                    this.dictionary = JSON.parse(this.config.dictionaryJson)
+                } catch (error) {
+                    this.showToast(`dictionary 格式错误！`, 'error');
+                    return;
+                }
+
+            }
             const retryCount = this.config.retryNum > 1 ? this.config.retryNum : 2;
             for (let attempt = 1; attempt <= retryCount; attempt++) {
                 try {
@@ -585,10 +595,11 @@ new Vue({
                             chunkSize: this.config.chunkSize,
                             messageMaxSize: this.config.messageMaxSize,
                             maxTokens: this.config.maxTokens,
-                            enableJsonSchema: this.config.enableJsonSchema
+                            enableJsonSchema: this.config.enableJsonSchema,
+                            dictionary: this.dictionary
                         }
                     };
-
+                    
                     const responseData = await this.fetchApi('/api/subtitle/translate', 'POST', requestBody);
 
                     if (responseData && responseData.success) {

@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GPT-Subtitle</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <!-- 添加 Bootstrap JS 依赖 -->
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.11.6/dist/umd/popper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.min.js"></script>
+    <style>
+        .subtitle-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .subtitle-item input {
+            flex-grow: 1;
+        }
+        .subtitle-item {
+            border-bottom: 1px solid #eee;
+            padding: 10px 0;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .badge {
+            font-size: 0.9em;
+        }
+        /* 确保 toast 显示在其他元素之上 */
+        .toast {
+            z-index: 1050;
+        }
+        /* 添加悬浮栏样式 */
+        .position-fixed {
+            transition: all 0.3s ease;
+        }
+        /* 在小屏幕上调整布局 */
+        @media (max-width: 768px) {
+            .position-fixed .container {
+                padding: 0 10px;
+            }
+
+            .position-fixed input[type="file"] {
+                width: 200px !important;
+            }
+        }
+        /* 设置按钮样式 */
+        .btn-outline-dark:hover {
+            background-color: #f8f9fa;
+            color: #212529;
+        }
+        /* 模态框样式 */
+        .modal-body {
+            max-height: 70vh;
+            overflow-y: auto;
+        }
+        /* 字幕行样式 */
+        .subtitle-row {
+            position: relative;
+            transition: all 0.2s ease;
+            border-radius: 4px;
+        }
+        .subtitle-row:hover {
+            background-color: rgba(0, 0, 0, 0.02);
+        }
+        /* 翻译按钮样式 */
+        .translate-btn {
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            color: #6c757d;
+        }
+        .translate-btn:hover {
+            color: #0d6efd;
+            transform: scale(1.1);
+        }
+        .subtitle-row:hover .translate-btn {
+            opacity: 1;
+        }
+        /* 字幕头部样式 */
+        .subtitle-header {
+            position: relative;
+        }
+        /* 输入框样式优化 */
+        .form-control:focus {
+            box-shadow: none;
+            border-color: #80bdff;
+        }
+        .form-control[readonly] {
+            background-color: #f8f9fa;
+        }
+        /* 确保按钮不会被截断 */
+        .subtitle-row {
+            overflow: visible;
+        }
+        /* 标签样式优化 */
+        .badge {
+            font-weight: normal;
+        }
+        /* 文件输入框美化 */
+        .input-group .form-control[type="file"] {
+            cursor: pointer;
+        }
+        .input-group .form-control[type="file"]:hover {
+            background-color: #f8f9fa;
+        }
+        /* 禁用状态的翻译按钮样式 */
+        .btn-warning:disabled {
+            opacity: 0.65;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+<div id="app" class="container mt-4 mb-5">
+    <!-- 信息面板 -->
+    <div class="alert alert-primary text-center" role="alert">
+        <h4 class="mb-0">{{ videoTitle }}</h4>
+    </div>
+
+    <!-- Toast 提示组件 -->
+    <div class="position-fixed top-0 end-0 p-3" style="z-index: 1050">
+        <div id="toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header" :class="toastClass">
+                <strong class="me-auto">提示</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">{{ toastMessage }}</div>
+        </div>
+    </div>
+
+    <!-- 字幕列表 -->
+    <div class="card">
+        <div class="card-body">
+            <div v-for="subtitle in subtitles"
+                 :key="subtitle.index"
+                 class="subtitle-row mb-2 p-2 border-bottom"
+                 :id="`subtitle-${subtitle.index}`">
+                <div class="d-flex align-items-center subtitle-header mb-1">
+                    <span class="badge bg-secondary me-2">{{ subtitle.index }}</span>
+                    <span class="text-muted flex-grow-1">{{ subtitle.timestamp }}</span>
+                    <button class="btn btn-link btn-sm p-0 translate-btn"
+                            @click="startTranslateFromLine(subtitle.index)"
+                            data-bs-toggle="tooltip"
+                            title="翻译此条">
+                        <i class="bi bi-translate"></i>
+                    </button>
+                </div>
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <div class="form-group mb-1">
+                            <label class="small text-muted">原文</label>
+                            <input type="text" class="form-control form-control-sm" v-model="subtitle.text" readonly>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group mb-1">
+                            <label class="small text-muted">译文</label>
+                            <input type="text" class="form-control form-control-sm" v-model="subtitle.translatedText"
+                                   :class="{'bg-light': subtitle.translated}">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 底部悬浮操作栏 -->
+    <div class="position-fixed bottom-0 start-0 w-100 bg-white border-top shadow-lg" style="z-index: 1000;">
+        <div class="container">
+            <div class="d-flex justify-content-between align-items-center py-3">
+                <!-- 左侧操作区 -->
+                <div class="d-flex align-items-center">
+                    <div class="input-group input-group-sm me-3" style="width: 300px;">
+                        <span class="input-group-text bg-light">
+                            <i class="bi bi-file-earmark-text"></i>
+                        </span>
+                        <input type="file"
+                               class="form-control"
+                               id="subtitleFile"
+                               accept=".srt"
+                               @change="handleFileUpload">
+                    </div>
+                    <button v-if="!isTranslating" class="btn btn-warning btn-sm px-3 me-3"
+                            @click="startTranslate()"
+                            :disabled="!fileId || stopping">
+                        <i class="bi bi-translate me-1"></i>
+                        <span>
+                            开始翻译
+                        </span>
+                    </button>
+                    <button v-else
+                            class="btn btn-danger btn-sm px-3 me-3"
+                            @click="stopTranslate()"
+                            :disabled="!fileId || stopping">
+                        <i class="bi bi-translate me-1"></i>
+                        <span v-if="stopping">
+                            停止中...
+                        </span>
+                        <span v-else>
+                            停止翻译
+                        </span>
+                    </button>
+
+                    <div class="btn-outline-secondary btn-sm me-3 px-3" v-if="subtitles && subtitles.length>0">
+                        <div class="d-flex align-items-center">
+                            <div class="progress" 
+                                 data-bs-toggle="tooltip"
+                                 :title="translatedCount + '/' + subtitles.length"
+                                 style="width: 150px; height: 20px; flex-grow: 1;">
+                                <div class="progress-bar"
+                                     :class="{'bg-success': progress >= 100, 'text-bg-secondary': progress < 100}"
+                                     role="progressbar"
+                                     :style="{ width: progress + '%' }"
+                                     :aria-valuenow="progress"
+                                     aria-valuemin="0"
+                                     aria-valuemax="100">
+                                    {{ progress }}%
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧操作区 -->
+                <div>
+                    <button class="btn btn-outline-secondary btn-sm me-3 px-3"
+                            @click="loadSubtitleInfo">
+                        <i class="bi bi-arrow-clockwise me-1"></i> 刷新
+                    </button>
+                    <button class="btn btn-success btn-sm me-3 px-3"
+                            @click="saveFile">
+                        <i class="bi bi-save me-1"></i> 保存
+                    </button>
+                    <button class="btn btn-outline-dark btn-sm px-3"
+                            @click="openSettings"
+                            data-bs-toggle="tooltip"
+                            title="设置">
+                        <i class="bi bi-gear"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 设置模态框 -->
+    <div class="modal fade" id="settingsModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">设置</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form>
+                        <div class="mb-3">
+                            <label class="form-label">Prompt</label>
+                            <textarea class="form-control" v-model="config.prompt" rows="3"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Base API</label>
+                            <input type="text" class="form-control" v-model="config.baseApi">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">App Key</label>
+                            <input type="text" class="form-control" v-model="config.appKey">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Model</label>
+                            <input type="text" class="form-control" v-model="config.model">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Chunk Size</label>
+                            <input type="number" class="form-control" v-model="config.chunkSize">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Message Max Size</label>
+                            <input type="number" class="form-control" v-model="config.messageMaxSize">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Retry Num</label>
+                            <input type="number" class="form-control" v-model="config.retryNum">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Max Tokens</label>
+                            <input type="number" class="form-control" v-model="config.maxTokens">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Dictionary</label>
+                            <textarea class="form-control" v-model="config.dictionary" rows="3" placeholder='{"你好":"hello","世界":"world"}'></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">
+                                <input type="checkbox" v-model="config.enableJsonSchema"><abbr title="控制模型返回更精确结果,LM Studio或Llama可选" class="initialism"> 启用 JSON Schema</abbr> <span></span>
+                            </label>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" @click="saveSettings">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+new Vue({
+    el: '#app',
+    data: {
+        videoTitle: '未上传字幕',
+        subtitles: [],
+        selectedFile: null,
+        fileId: '96105951c0ae78ae8e7d2c4f1ae78921',
+        toastMessage: '',
+        toastClass: '',
+        isTranslating: false,
+        stopping: false,
+        translatedCount: 0,
+        config: {
+            prompt: '',
+            baseApi: '',
+            appKey: '',
+            model: '',
+            chunkSize: 0,
+            messageMaxSize: 0,
+            maxTokens: 0,
+            dictionary: "",
+            enableJsonSchema: false,
+            retryNum: 3
+        },
+        settingsModal: null
+    },
+    methods: {
+        async fetchApi(url, method = 'GET', body = null) {
+            try {
+                const options = {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                };
+
+                if (body) {
+                    options.body = typeof body === 'string' ? body : JSON.stringify(body);
+                }
+
+                const response = await fetch(url, options);
+
+                if (!response.ok) {
+                    this.showToast(`HTTP error! Status: ${response.status}`, 'error')
+                } else {
+                    return await response.json();
+                }
+            } catch (error) {
+                this.showToast(`Error in fetchApi: ${error.message}`, 'error');
+                throw error; // 抛出错误，供调用者捕获处理
+            }
+        },
+        showToast(message, type = 'success') {
+            this.toastMessage = message;
+            this.toastClass = type === 'success' ? 'bg-success text-white' : 'bg-danger text-white';
+            const toastEl = document.getElementById('toast');
+            const toast = new bootstrap.Toast(toastEl);
+            toast.show();
+        },
+        async handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Show uploading message
+            this.showToast('正在上传文件...');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/subtitle/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    this.showToast('上传失败: ' + errorText, 'error');
+                    // Clear file selection
+                    event.target.value = '';
+                }
+                const responseData = await response.json();
+                if (responseData && responseData.success){
+                    this.fileId = await responseData.data;
+                    localStorage.setItem('fileId', this.fileId); // Save fileId to local storage
+                    await this.loadSubtitleInfo();
+                    this.showToast('文件上传成功');
+                } else {
+                    this.showToast(`文件上传失败！${responseData | responseData.message}`);
+                }
+
+            } catch (error) {
+                console.error('上传出错:', error);
+                this.showToast('上传出错: ' + error.message, 'error');
+                // Clear file selection
+                event.target.value = '';
+            }
+        },
+        updateSubtitlesData(data) {
+            this.fileId = data.fileId;
+            this.subtitles = data.subtitles;
+            // 设置视频标题（使用文件ID的前8位作为简短标识）
+            this.videoTitle = `字幕文件 (${this.fileId.substring(0, 8)}...)`;
+            this.translatedCount = this.getTranslatedCount();
+        },
+        async loadSubtitleInfo() {
+            if (!this.fileId) return;
+
+            const data = await this.fetchApi(`/api/subtitle/getSubtitleInfo?fileId=${this.fileId}`);
+            if (data && data.success) {
+                this.updateSubtitlesData(data.data);
+                this.showToast('加载字幕成功！', 'success');
+            } else {
+                console.error('获取字幕信息失败:', error);
+                this.showToast('获取字幕信息失败: ' + error.message, 'error');
+            }
+        },
+        generateSRT() {
+            let content = '';
+            this.subtitles.forEach(subtitle => {
+                // 序号
+                content += subtitle.index + '\n';
+                // 时间戳
+                content += subtitle.timestamp + '\n';
+                // 原文
+                content += subtitle.text + '\n';
+                // 如果有译文，添加译文
+                if (subtitle.translatedText) {
+                    content += subtitle.translatedText + '\n';
+                }
+                // 空行分隔
+                content += '\n';
+            });
+            return content;
+        },
+
+        downloadFile(content, filename) {
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+
+            // 添加到文档中并触发点击
+            document.body.appendChild(link);
+            link.click();
+
+            // 清理
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        },
+
+        async saveFile() {
+            try {
+                // 生成双语字幕内容
+                const content = this.generateSRT();
+
+                // 生成文件名（使用原文件ID并添加时间戳）
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                const filename = `bilingual_${this.fileId.slice(0, 8)}_${timestamp}.srt`;
+
+                // 下载文件
+                this.downloadFile(content, filename);
+
+                this.showToast('字幕文件已保存');
+            } catch (error) {
+                console.error('保存文件失败:', error);
+                this.showToast('保存文件失败: ' + error.message, 'error');
+            }
+        },
+        async startTranslate() {
+            if (this.isTranslating || !this.fileId) return;
+
+            // 检查配置是否存在
+            if (!this.config || !this.config.baseApi || !this.config.appKey || !this.config.model) {
+                this.showToast('请先完成配置设置', 'error');
+                this.openSettings();
+                return;
+            }
+
+            this.isTranslating = true;
+            this.translatedCount = this.getTranslatedCount();
+
+            try {
+                for (let i = 0; i < this.subtitles.length; i++) {
+                    const subtitle = this.subtitles[i];
+
+                    // 如果已经翻译过，跳过
+                    if (subtitle.translatedText && subtitle.translated) {
+                        continue;
+                    }
+
+                    const translations = await this.translateWithRetry(subtitle);
+
+                    // 记录最后一个翻译的索引
+                    let lastTranslatedIndex = subtitle.index;
+
+                    // 从当前字幕开始，将翻译结果填充到后续字幕中
+                    for (let j = 0; j < translations.length && (i + j) < this.subtitles.length; j++) {
+                        this.subtitles[i + j].translatedText = translations[j];
+                        this.subtitles[i + j].translated = true;
+                        lastTranslatedIndex = this.subtitles[i + j].index;
+                    }
+
+                    // 跳过已经翻译的行数
+                    i += translations.length - 1;
+
+                    // 更新翻译计数
+                    this.translatedCount = this.getTranslatedCount();
+
+                    // 显示进度并滚动到最后翻译的位置
+                    this.showToast(`已翻译至第 ${lastTranslatedIndex} 行`);
+                    this.scrollToSubtitle(lastTranslatedIndex);
+
+                    // 给浏览器一点时间来处理 DOM 更新
+                    await new Promise(resolve => setTimeout(resolve, 100));
+
+                    // 如果停止翻译，就终止
+                    if (this.stopping) {
+                        this.showToast('翻译已停止', 'warning');
+                        this.isTranslating = false;
+                        this.stopping = false;
+                        break;
+                    }
+                }
+
+                this.showToast('翻译完成！');
+            } catch (error) {
+                console.error('翻译过程出错:', error);
+                this.showToast('翻译过程出错: ' + error.message, 'error');
+            } finally {
+                this.isTranslating = false;
+            }
+        },
+        async loadConfig() {
+            // 先尝试从本地存储获取
+            const savedConfig = localStorage.getItem('subtitleConfig');
+            if (savedConfig) {
+                this.config = JSON.parse(savedConfig);
+                return;
+            }
+
+            // 如果本地没有，从服务器获取
+            const responseData = await this.fetchApi('/api/subtitle/getConfig');
+            if (responseData && responseData.success) {
+                this.config = responseData.data;
+                // 保存到本地存储
+                localStorage.setItem('subtitleConfig', JSON.stringify(this.config));
+            } else {
+                this.showToast('获取配置失败', 'error');
+            }
+        },
+        openSettings() {
+            this.settingsModal.show();
+        },
+        saveSettings() {
+            // 保存到本地存储
+            localStorage.setItem('subtitleConfig', JSON.stringify(this.config));
+            this.showToast('设置已保存');
+            this.settingsModal.hide();
+        },
+        async translateWithRetry(subtitle) {
+            const retryCount = this.config.retryNum > 1 ? this.config.retryNum : 2;
+            for (let attempt = 1; attempt <= retryCount; attempt++) {
+                try {
+                    // 构建请求体
+                    const requestBody = {
+                        fileId: this.fileId,
+                        begin: subtitle.realIndex,
+                        config: {
+                            prompt: this.config.prompt,
+                            baseApi: this.config.baseApi,
+                            model: this.config.model,
+                            appKey: this.config.appKey,
+                            chunkSize: this.config.chunkSize,
+                            messageMaxSize: this.config.messageMaxSize,
+                            maxTokens: this.config.maxTokens,
+                            enableJsonSchema: this.config.enableJsonSchema
+                        }
+                    };
+
+                    const responseData = await this.fetchApi('/api/subtitle/translate', 'POST', requestBody);
+
+                    if (responseData && responseData.success) {
+                        return responseData.data;
+                    } else {
+                        const errorText = responseData.message;
+                        if (attempt === retryCount) {
+                            throw new Error(errorText);
+                        }
+                        this.showToast(`第 ${attempt} / ${this.config.retryNum} 次翻译失败，正在重试...`, 'error');
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                } catch (error) {
+                    if (attempt === retryCount) {
+                        throw error;
+                    }
+                    this.showToast(`第 ${attempt} 次翻译失败，正在重试...`, 'error');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+            throw new Error(`重试第 ${retryCount} 次翻译失败，停止翻译`)
+        },
+        getTranslatedCount() {
+            return this.subtitles.filter(subtitle => subtitle.translated).length;
+        },
+        async startTranslateFromLine(index) {
+
+            // 检查配置是否存在
+            if (!this.config || !this.config.baseApi || !this.config.appKey || !this.config.model) {
+                this.showToast('请先完成配置设置', 'error');
+                this.openSettings();
+                return;
+            }
+
+            this.isTranslating = true;
+
+            try {
+                const subtitle = this.subtitles.find(s => s.index === index);
+                if (!subtitle) return;
+
+                const translations = await this.translateWithRetry(subtitle);
+
+                // 填充翻译结果
+                for (let j = 0; j < translations.length && (index + j - 1) < this.subtitles.length; j++) {
+                    const targetIndex = this.subtitles.findIndex(s => s.index === (index + j));
+                    if (targetIndex !== -1) {
+                        this.subtitles[targetIndex].translatedText = translations[j];
+                        this.subtitles[targetIndex].translated = true;
+                    }
+                }
+
+                this.translatedCount = this.getTranslatedCount();
+                this.showToast(`已翻译第 ${index} 行及后续内容`);
+
+            } catch (error) {
+                console.error(`翻译失败:`, error);
+                this.showToast(`翻译失败: ${error.message}`, 'error');
+            } finally {
+                this.isTranslating = false;
+            }
+        },
+        scrollToSubtitle(index) {
+            const subtitleElement = document.getElementById(`subtitle-${index}`);
+            if (subtitleElement) {
+                subtitleElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        },
+        stopTranslate() {
+            this.stopping = true;
+        }
+    },
+    created() {
+        // Check for fileId in local storage
+        const savedFileId = localStorage.getItem('fileId');
+        if (savedFileId) {
+            this.fileId = savedFileId; // Set fileId from local storage
+            this.loadSubtitleInfo(); // Load subtitle info
+        }
+    },
+    async mounted() {
+        // Ensure Bootstrap and Bootstrap Icons are loaded
+        if (typeof bootstrap === 'undefined') {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js';
+            document.head.appendChild(script);
+        }
+
+        // Add Bootstrap Icons
+        if (!document.querySelector('link[href*="bootstrap-icons"]')) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css';
+            document.head.appendChild(link);
+        }
+
+        // Initialize tooltips
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+
+        // Initialize modal
+        this.settingsModal = new bootstrap.Modal(document.getElementById('settingsModal'));
+
+        // Load config
+        await this.loadConfig();
+    },
+    computed: {
+        progress() {
+            return this.subtitles.length > 0
+                ? parseInt((this.translatedCount * 100) / this.subtitles.length)
+                : 0;
+        }
+    },
+    beforeDestroy() {
+        // 组件销毁前清除定时器
+        if (this.timer) {
+            clearInterval(this.timer);
+        }
+    }
+});
+</script>
+</body>
+</html>

@@ -113,6 +113,38 @@
             opacity: 0.65;
             cursor: not-allowed;
         }
+
+        /* 回到顶部按钮样式 */
+        .back-to-top {
+            position: fixed;
+            bottom: 100px;
+            right: 20px;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+        }
+        
+        .back-to-top.show {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .progress-text {
+            position: absolute;
+            left: -10px;
+            top: -10px; /* 调整到进度条下方 */
+            transform: translateX(-15px) translateY(0px); /* 初始稍微下移 */
+            transition: opacity 0.3s ease, transform 0.3s ease; /* 过渡动画 */
+            color: #000;
+            opacity: 1;
+            backdrop-filter: blur(5px);
+        }
+        
+        .progress-container:hover .progress-text {
+            opacity: 1; /* 显示 */
+            transform: translateX(-10px) translateY(0); /* 轻微上移 */
+        }
     </style>
 </head>
 <body>
@@ -135,22 +167,22 @@
     </div>
 
     <!-- 字幕列表 -->
-    <div class="card">
-        <div class="card-body">
+    <div class="card" ref="scrollContainer">
+        <div class="card-body p-2">
             <div v-for="subtitle in subtitles"
-                 :key="subtitle.index"
-                 class="subtitle-row mb-2 p-2 border-bottom"
-                 :id="`subtitle-${subtitle.index}`">
+                 :key="subtitle.realIndex"
+                 class="subtitle-row py-1 px-2 mb-1 border-bottom"
+                 :id="`subtitle-${subtitle.realIndex}`">
                 <div class="d-flex align-items-center subtitle-header mb-1">
-                    <span class="badge bg-secondary me-2">{{ subtitle.index }}</span>
-                    <span class="text-muted flex-grow-1">{{ subtitle.timestamp }}</span>
-                    <button class="btn btn-link btn-sm p-1 me-1 translate-btn"
+                    <span class="badge bg-secondary me-1 small">{{ subtitle.index }}</span>
+                    <span class="text-muted flex-grow-1 small">{{ subtitle.timestamp }}</span>
+                    <button class="btn btn-link btn-sm p-0 me-1 translate-btn"
                             @click="startTranslateFromLine(subtitle.index)"
                             data-bs-toggle="tooltip"
                             title="翻译此条">
                         <i class="bi bi-translate"></i>
                     </button>
-                    <button class="btn btn-link btn-sm p-1 translate-btn"
+                    <button class="btn btn-link btn-sm p-0 translate-btn"
                             @click="removeTranslatedItem(subtitle)"
                             v-if="subtitle.translated"
                             data-bs-toggle="tooltip"
@@ -158,20 +190,24 @@
                         <i class="bi bi-trash-fill" style="color: #dc3545"></i>
                     </button>
                 </div>
-                <div class="row g-2">
+                <div class="row g-1">
                     <div class="col-md-6">
                         <div class="form-group mb-1">
-                            <label class="small text-muted">原文</label>
-                            <input type="text" class="form-control form-control-sm" v-model="subtitle.text" readonly>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text py-0 px-1 small">原</span>
+                                <input type="text" class="form-control form-control-sm" v-model="subtitle.text" readonly>
+                            </div>
                         </div>
                     </div>
                     <div class="col-md-6">
                         <div class="form-group mb-1">
-                            <label class="small text-muted">译文</label>
-                            <input type="text" class="form-control form-control-sm" v-model="subtitle.translatedText"
-                                   @focus="storeOldValue($event)"
-                                   @blur="updateTranslatedItem($event, subtitle.index)"
-                                   :class="{'bg-light': subtitle.translated}">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text py-0 px-1 small">译</span>
+                                <input type="text" class="form-control form-control-sm" v-model="subtitle.translatedText"
+                                       @focus="storeOldValue($event)"
+                                       @blur="updateTranslatedItem($event, subtitle.index)"
+                                       :class="{'bg-light': subtitle.translated}">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -179,8 +215,24 @@
         </div>
     </div>
 
+    <!-- 进度指示条 -->
+    <div class="position-fixed bottom-0 start-0 w-100 bg-white py-1" style="z-index: 1001;">
+        <div class="container progress-container">
+            <div class="progress"
+                 style="border-radius: 0; position: relative; height: 5px; overflow: visible">
+                <div class="progress-bar bg-warning progress-bar-striped"
+                     :class="isTranslating?'progress-bar-animated':''"
+                     :style="{ width: progress + '%' }">
+                </div>
+                <!-- 右侧的进度百分比显示 -->
+                <span class="progress-text p-1 badge shadow-sm"
+                      :style="{ left: progress + '%' }">{{ progress }}%</span>
+            </div>
+        </div>
+    </div>
+
     <!-- 底部悬浮操作栏 -->
-    <div class="position-fixed bottom-0 start-0 w-100 bg-white border-top shadow-lg" style="z-index: 1000;">
+    <div class="position-fixed bottom-0 start-0 w-100 bg-white border-top shadow-lg mb-1" style="z-index: 1000;">
         <div class="container">
             <div class="d-flex justify-content-between align-items-center py-3">
                 <!-- 左侧操作区 -->
@@ -204,6 +256,8 @@
                         </span>
                     </button>
                     <button v-else
+                            data-bs-toggle="tooltip"
+                            :title="translatedCount + '/' + subtitles.length"
                             class="btn btn-danger btn-sm px-3 me-3"
                             @click="stopTranslate()"
                             :disabled="!fileInfo.fileId || stopping">
@@ -212,28 +266,9 @@
                             停止中...
                         </span>
                         <span v-else>
-                            停止翻译
+                            停止翻译 
                         </span>
                     </button>
-
-                    <div class="btn-outline-secondary btn-sm me-3 px-3" v-if="subtitles && subtitles.length>0">
-                        <div class="d-flex align-items-center">
-                            <div class="progress"
-                                 data-bs-toggle="tooltip"
-                                 :title="translatedCount + '/' + subtitles.length"
-                                 style="width: 150px; height: 20px; flex-grow: 1;">
-                                <div class="progress-bar"
-                                     :class="{'bg-success': progress >= 100, 'text-bg-secondary': progress < 100}"
-                                     role="progressbar"
-                                     :style="{ width: progress + '%' }"
-                                     :aria-valuenow="progress"
-                                     aria-valuemin="0"
-                                     aria-valuemax="100">
-                                    {{ progress }}%
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- 右侧操作区 -->
@@ -326,16 +361,27 @@
                     <div class="container-fluid">
                         <div class="row justify-content-center">
                             <div class="col-auto">
-                                <button type="button" @click="saveFile(true)" class="btn btn-secondary">保存双语字幕</button>
+                                <button type="button" @click="saveFile(true)" class="btn btn-secondary btn-sm">保存双语字幕</button>
                             </div>
                             <div class="col-auto">
-                                <button type="button" @click="saveFile(false)" class="btn btn-secondary">仅保存翻译后字幕</button>
+                                <button type="button" @click="saveFile(false)" class="btn btn-secondary btn-sm">仅保存翻译后字幕</button>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- 回到顶部按钮 -->
+    <div class="btn-group-vertical back-to-top shadow-lg" :class="{ 'show': showBackToTop }"
+         role="group" aria-label="Vertical button group">
+        <button type="button" class="btn btn-outline-secondary btn-sm" @click="scrollTopLine">
+            <i class="bi bi-arrow-up"></i>
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" @click="scrollLastLine">
+            <i class="bi bi-arrow-down"></i>
+        </button>
     </div>
 </div>
 
@@ -371,7 +417,9 @@ new Vue({
         },
         downloadModal: null,
         settingsModal: null,
-        oldTranslatedValue: null
+        showBackToTop: false,
+        oldTranslatedValue: null,
+        isUserScrolling: false,
     },
     methods: {
         async fetchApi(url, method = 'GET', body = null) {
@@ -710,7 +758,11 @@ new Vue({
             }
         },
         scrollToSubtitle(index) {
+            if (this.isUserScrolling) {
+                return
+            }
             const subtitleElement = document.getElementById(`subtitle-${index}`);
+            console.log(subtitleElement)
             if (subtitleElement) {
                 subtitleElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
@@ -750,8 +802,23 @@ new Vue({
             } else {
                 this.showToast(`删除失败！${responseData | responseData.message}`, 'error');
             }
+        },
+        handleWheel() {
+            this.isUserScrolling = true;
+        },
+        handleScroll() {
+            this.showBackToTop = window.scrollY > 200;
+        },
+        scrollTopLine(){
+            this.isUserScrolling = false;
+            this.scrollToSubtitle(0)
+            this.isUserScrolling = true;
+        },
+        scrollLastLine(){
+            this.isUserScrolling = false;
+            const lastTranslatedIndex = this.subtitles.findIndex(item => !item.translated);
+            this.scrollToSubtitle(lastTranslatedIndex)
         }
-        
     },
     created() {
         // Check for fileId in local storage
@@ -789,6 +856,11 @@ new Vue({
 
         // Load config
         await this.loadConfig();
+
+        // 添加滚动监听
+        window.addEventListener('scroll', this.handleScroll);
+
+        this.$refs.scrollContainer.addEventListener("wheel", this.handleWheel);
     },
     computed: {
         progress() {
@@ -798,7 +870,10 @@ new Vue({
         }
     },
     beforeDestroy() {
-
+        // 移除滚动监听
+        window.removeEventListener('scroll', this.handleScroll);
+        this.$refs.scrollContainer.removeEventListener("wheel", this.handleWheel);
+        
     }
 });
 </script>
